@@ -14,3 +14,7 @@ data/
 runs/
 .env.*
 !.env.example
+
+# Word documentation stays on the PC only
+*.docx
+*.doc
