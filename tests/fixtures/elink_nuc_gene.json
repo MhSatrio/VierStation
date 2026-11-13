@@ -1,0 +1,1 @@
+{"header":{"type":"elink","version":"0.3"},"linksets":[{"dbfrom":"nuccore","ids":["1808862652"],"linksetdbs":[{"dbto":"gene","linkname":"nuccore_gene","links":["7157"]}]}]}

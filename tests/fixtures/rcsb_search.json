@@ -1,0 +1,15 @@
+{
+  "query_id" : "f499d5f1-7fd4-4516-8871-ea034c6fac98",
+  "result_type" : "entry",
+  "total_count" : 87,
+  "result_set" : [ {
+    "identifier" : "1AB2",
+    "score" : 1.0
+  }, {
+    "identifier" : "1AWO",
+    "score" : 1.0
+  }, {
+    "identifier" : "1BBZ",
+    "score" : 1.0
+  } ]
+}
