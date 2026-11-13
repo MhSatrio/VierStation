@@ -1,0 +1,496 @@
+// Exports generated from the STORED history (seq_ops / seq_versions): a Markdown change log and Python reproduction scripts.
+// Nothing here is invented: every statement comes from a stored operation, and every step that cannot be reproduced exactly says so and names the closest alternative.
+import { createHash } from 'node:crypto';
+import { getRaw } from '../records.ts';
+import { listOps, stateOf, getVersion, listVersions, latestOp, getOp } from './store.ts';
+import type { Op, Version } from './store.ts';
+import { recordName, currentDataset } from './dataset.ts';
+
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+const fmtT = (iso: string) => iso.replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+const md = (s: unknown) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+const json = (o: unknown) => '```json\n' + JSON.stringify(o, null, 2) + '\n```';
+
+// ---------------------------------------------------------------- chain of versions from raw to head
+export function versionChain(recordId: string): Version[] {
+  const st = stateOf(recordId); if (!st) return [];
+  const chain: Version[] = []; let v: Version | undefined = st.head;
+  while (v) { chain.unshift(v); v = v.parentId ? getVersion(v.parentId) : undefined; }
+  return chain;
+}
+
+// ---------------------------------------------------------------- Markdown change log
+function describeResult(op: Op): string[] {
+  const r = op.result; if (!r || typeof r !== 'object') return [];
+  const out: string[] = [];
+  if (op.step === 'blast' && r.hits) {
+    out.push(`- Result: ${r.hits.length} hit(s) stored (BLAST request id \`${r.rid}\`, retrieved ${fmtT(r.retrievedAt ?? op.createdAt)}).`);
+    out.push('', '| # | Accession | Organism | Identity % | Coverage % | E-value | Bit score |', '|---|---|---|---|---|---|---|');
+    r.hits.slice(0, 10).forEach((h: any, i: number) => out.push(`| ${i + 1} | ${h.accession} | ${md(h.organism)} | ${h.identityPct} | ${h.coveragePct} | ${h.evalue} | ${h.bitScore} |`));
+    if (r.hits.length > 10) out.push(`| … | ${r.hits.length - 10} more hit(s) not shown here | | | | | |`);
+  } else if (op.step === 'dataset' && r.members) {
+    out.push(`- Dataset version with ${r.members.length} sequence(s) (${r.members.filter((m: any) => m.role === 'ingroup').length} ingroup, ${r.members.filter((m: any) => m.role === 'outgroup').length} outgroup, 1 query).`);
+    out.push('', '| Role | Accession | Organism | Region (subject coordinates) | Why it is included |', '|---|---|---|---|---|');
+    for (const m of r.members) out.push(`| ${m.role} | ${m.accession ?? '—'} | ${md(m.organism)} | ${m.region ? `${m.region.from}–${m.region.to} (${m.region.strand})` : '—'} | ${md((m.reasons ?? []).join('; '))} |`);
+    if (r.excluded?.length) { out.push('', `Excluded candidates (${r.excluded.length}):`, ''); for (const e of r.excluded.slice(0, 30)) out.push(`- ${e.accession} (${md(e.organism)}): ${e.reason}`); if (r.excluded.length > 30) out.push(`- … ${r.excluded.length - 30} more`); }
+  } else if (op.step === 'species' && r.notes) {
+    out.push(`- Result: ${r.added} species added from ${r.notes.length} typed name(s).`);
+    for (const n of r.notes) out.push(`  - "${md(n.name)}": ${n.status === 'added' ? 'added – ' : n.status === 'not_found' ? 'not found – ' : 'not added – '}${md(n.detail)}${n.entrez ? ` (NCBI query \`${n.entrez}\`)` : ''}`);
+  } else if (op.step === 'relatives') {
+    out.push(`- Result: ${r.kept} relative(s) kept, ${r.excluded?.length ?? 0} candidate(s) excluded. Best BLAST match: ${r.bestMatch?.organism ?? '—'} (${r.bestMatch?.accession ?? '—'}).`);
+  } else if (op.step === 'outgroups' && r.candidates) {
+    out.push(`- Result: ${r.candidates.length} outgroup candidate(s) from the sister lineage (NCBI query \`${r.entrez}\`).`);
+    for (const c of r.candidates) out.push(`  - ${c.accession} ${md(c.organism)} – ${md((c.reasons ?? []).slice(0, 2).join('; '))}`);
+    if (r.excluded?.length) out.push(`- ${r.excluded.length} hit(s) were not offered (reasons stored with the operation).`);
+  } else if ((op.step === 'align' || op.step === 'align_edit') && r.rows) {
+    out.push(`- Result: ${r.rows.length} sequences × ${r.length} columns; method: ${r.method ?? 'manual edit'}; sum-of-pairs score ${r.spScore ?? '—'}.`);
+    if (r.iterations?.length > 1) out.push(`- Refinement rounds: ${r.iterations.map((i: any) => `#${i.iteration}: ${i.spScore}${i.improved ? ` (${i.improved} improved)` : ''}`).join('; ')}.`);
+    if (r.edit) out.push(`- Manual edit: ${md(r.edit.summary)}`);
+  } else if (op.step === 'tree' && r.newick) {
+    out.push(`- Result: ${r.method?.toUpperCase()} tree of ${r.labels?.length} sequences; ${r.sitesKept} sites used; rooting: ${md(r.rooting)}; bootstrap replicates: ${r.bootstrapDone}.`);
+    if (r.scoreName) out.push(`- ${r.scoreName}: ${r.score}`);
+    out.push('', 'Newick:', '', '```', r.newick, '```');
+    if (r.interpretation) out.push('', `Interpretation (generated by VierStation from this tree): ${md(r.interpretation.summary)}`);
+  } else if (op.step === 'pairwise' && r.alignment) {
+    out.push(`- Result: ${md(r.summary)}`);
+  } else if (op.step === 'identify') {
+    out.push(`- Conclusion recorded by the user: **${md(r.taxon)}** (${md(r.rank)}), confidence: ${md(r.confidence)}.`);
+    if (r.notes) out.push(`- Notes: ${md(r.notes)}`);
+  } else if (op.step === 'ncbi_record') {
+    out.push(`- Saved NCBI record ${r.accession} as VierStation record \`${r.savedRecordId}\` (${r.summary ?? ''}).`);
+  }
+  return out;
+}
+
+export function changeLogMarkdown(recordId: string): string {
+  const st = stateOf(recordId); if (!st) throw new Error('No history for this record');
+  const ops = listOps(recordId, { withResult: true });
+  const name = recordName(recordId), rec = getRaw(recordId);
+  const versions = listVersions(recordId);
+  const L: string[] = [];
+  L.push(`# Sequence workflow history – ${name}`, '');
+  L.push(`Generated by VierStation from the stored operation log on ${fmtT(new Date().toISOString())}. Record id: \`${recordId}\`${rec ? '' : ' (record deleted)'}.`, '');
+  L.push('## Sequence summary', '');
+  L.push('| | Length | SHA-256 (first 16) |', '|---|---|---|');
+  L.push(`| Raw (immutable) | ${st.raw.seq.length} bp | \`${sha(st.raw.seq).slice(0, 16)}\` |`);
+  L.push(`| Current working version (v${st.head.n}) | ${st.head.seq.length} bp | \`${sha(st.head.seq).slice(0, 16)}\` |`, '');
+  L.push(`Versions kept: ${versions.length}. Operations logged: ${ops.length}.`, '');
+  const meta = st.meta as Record<string, any>;
+  if (meta.source === 'adopted') L.push('> **Note:** this record existed before the Sequence Lab. Its raw version is the sequence stored in the record when it entered the lab; the original file or chromatogram was not kept.', '');
+  L.push('## Timeline', '', '| # | Time (UTC) | Step | Operation | Status | By | Automatic |', '|---|---|---|---|---|---|---|');
+  ops.forEach((o, i) => L.push(`| ${i + 1} | ${fmtT(o.createdAt)} | ${o.step} | ${md(o.name)} | ${o.status} | ${md(o.actorName ?? (o.actor ? o.actor : 'system'))} | ${o.automatic ? 'yes' : 'no'} |`));
+  L.push('', '## Details', '');
+  ops.forEach((o, i) => {
+    L.push(`### ${i + 1}. ${md(o.name)}`, '');
+    L.push(`- Time: ${fmtT(o.createdAt)} · Step: \`${o.step}\` · Status: **${o.status}**${o.automatic ? ' · performed automatically (suggested by VierStation, not by a person)' : ' · performed by a person'}${o.actorName ? ` (${md(o.actorName)})` : ''}`);
+    if (o.inputRef || o.outputRef) L.push(`- Input: \`${o.inputRef ?? '—'}\` → Output: \`${o.outputRef ?? '—'}\``);
+    if (o.tool) L.push(`- Tool: ${md(o.tool)}${o.toolVersion ? ` v${md(o.toolVersion)}` : ''}`);
+    if (o.dbSource) L.push(`- Database / source: ${md(o.dbSource)}${o.dbRetrievedAt ? ` (retrieved ${fmtT(o.dbRetrievedAt)})` : ''}`);
+    if (o.supersedes) L.push(`- Re-run of an earlier operation (\`${o.supersedes}\`); the earlier result is kept in the history.`);
+    if (Object.keys(o.params ?? {}).length) L.push('- Parameters:', '', json(o.params));
+    const ch = o.changes as any;
+    if (ch?.summary) L.push(`- Change: ${md(ch.summary)}`);
+    if (ch?.changes?.length) {
+      L.push(`- Base-level changes (${ch.changeCount ?? ch.changes.length}${ch.changes.length < (ch.changeCount ?? 0) ? `, first ${ch.changes.length} shown` : ''}):`, '');
+      for (const c of ch.changes.slice(0, 100)) L.push(`  - position ${c.pos}: ${c.from || '(base)'} → ${c.to || '(removed)'}`);
+      if (ch.changes.length > 100) L.push(`  - … ${ch.changes.length - 100} more in the stored operation`);
+    }
+    if (ch && (ch.removed5 !== undefined || ch.removed3 !== undefined) && (ch.removed5 || ch.removed3)) L.push(`- Trimmed: ${ch.removed5} base(s) from the 5′ end and ${ch.removed3} from the 3′ end; kept positions ${ch.keptRange?.join('–')}.`);
+    L.push(...describeResult(o));
+    if (o.error) L.push(`- **Error:** ${md(o.error)}`);
+    for (const w of o.warnings) L.push(`- ⚠ ${md(w)}`);
+    L.push('');
+  });
+  L.push('## Reproducibility', '', 'The Python script exported from the same history (Exports → Workflow script) recreates the cleaning steps exactly, re-queries NCBI with the recorded parameters, and states for every step whether it reproduces exactly or only approximately. NCBI databases change over time, so BLAST results re-run later can differ from those stored here.', '');
+  return L.join('\n');
+}
+
+// ---------------------------------------------------------------- Python scripts
+const py = (s: unknown) => JSON.stringify(s); // JSON strings are valid Python string literals for our data (ASCII sequences, text)
+const pyBool = (b: boolean) => (b ? 'True' : 'False');
+
+const CLEAN_PY = `
+# ---- cleaning primitives (the same algorithms VierStation applies; positions are 1-based like the log) ----
+from Bio.Seq import Seq
+AMBIG = set("RYSWKMBDHVN")
+
+def _trim_result(seq, qual, a, b):
+    return seq[a:b], (qual[a:b] if qual is not None else None)
+
+def trim_window(seq, qual, threshold=20, window=10, ends="both"):
+    n = len(qual); w = min(window, n)
+    mean = lambda i: sum(qual[i:i + w]) / w
+    a, b = 0, n
+    if ends != "3":
+        while a + w <= n and mean(a) < threshold: a += 1
+    if ends != "5":
+        b = n
+        while b - w >= a and mean(b - w) < threshold: b -= 1
+    # a passing window can still start/end with bases below the threshold: peel them off the edges
+    if ends != "3":
+        while a < b - 1 and qual[a] < threshold: a += 1
+    if ends != "5":
+        while b > a + 1 and qual[b - 1] < threshold: b -= 1
+    return _trim_result(seq, qual, a, b)
+
+def trim_mott(seq, qual, error_cutoff=0.05):
+    best = cur = 0.0; best_a = best_b = cur_a = 0
+    for i, q in enumerate(qual):
+        sc = error_cutoff - 10 ** (-q / 10)
+        if cur <= 0: cur = 0.0; cur_a = i
+        cur += sc
+        if cur > best: best, best_a, best_b = cur, cur_a, i + 1
+    return _trim_result(seq, qual, best_a, best_b)
+
+def trim_ambiguous_ends(seq, qual):
+    a, b = 0, len(seq)
+    while a < b and seq[a] in AMBIG: a += 1
+    while b > a and seq[b - 1] in AMBIG: b -= 1
+    return _trim_result(seq, qual, a, b)
+
+def trim_region(seq, qual, start, end, mode="keep"):
+    if mode == "keep": return _trim_result(seq, qual, start - 1, end)
+    return seq[:start - 1] + seq[end:], (qual[:start - 1] + qual[end:] if qual is not None else None)
+
+def remove_bases(seq, qual, chars):
+    drop = set(chars.upper()); keep = [i for i, c in enumerate(seq) if c not in drop]
+    return "".join(seq[i] for i in keep), ([qual[i] for i in keep] if qual is not None else None)
+
+def edit_base(seq, qual, pos, base):
+    return seq[:pos - 1] + base.upper() + seq[pos:], qual
+
+def mask_low_quality(seq, qual, threshold=20):
+    return "".join("N" if q < threshold else c for c, q in zip(seq, qual)), qual
+
+def reverse_complement(seq, qual):
+    return str(Seq(seq).reverse_complement()), (qual[::-1] if qual is not None else None)
+
+def mark_region(seq, qual, start, end, note=""):
+    print(f"  (marked {start}-{end} as uncertain: {note}; marks do not change the sequence)")
+    return seq, qual
+
+# ---- forward + reverse read merge (same algorithm as VierStation: overlap alignment +2/-3/-4, column-wise consensus) ----
+_IUPAC = {"A": "A", "C": "C", "G": "G", "T": "T", "R": "AG", "Y": "CT", "S": "CG", "W": "AT", "K": "GT", "M": "AC", "B": "CGT", "D": "AGT", "H": "ACT", "V": "ACG", "N": "ACGT"}
+
+def _sc(x, y):
+    if x not in "ACGT" or y not in "ACGT": return 0
+    return 2 if x == y else -3
+
+def _overlap_align(a, b, gap=4):
+    n, m = len(a), len(b)
+    H = [[0] * (m + 1) for _ in range(n + 1)]; T = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            d = H[i - 1][j - 1] + _sc(a[i - 1], b[j - 1]); u = H[i - 1][j] - gap; l = H[i][j - 1] - gap
+            if d >= u and d >= l: H[i][j] = d; T[i][j] = 0
+            elif u >= l: H[i][j] = u; T[i][j] = 1
+            else: H[i][j] = l; T[i][j] = 2
+    best = -10 ** 9; bi, bj = n, 0
+    for j in range(m + 1):
+        if H[n][j] > best: best = H[n][j]; bi, bj = n, j
+    for i in range(n + 1):
+        if H[i][m] > best: best = H[i][m]; bi, bj = i, m
+    pairs = []; i, j = bi, bj
+    while i > 0 and j > 0:
+        t = T[i][j]
+        if t == 0: pairs.append((i - 1, j - 1)); i -= 1; j -= 1
+        elif t == 1: pairs.append((i - 1, -1)); i -= 1
+        else: pairs.append((-1, j - 1)); j -= 1
+    pairs.reverse()
+    return best, pairs, i, j, bi, bj
+
+def _union(x, y):
+    if x == "N" or y == "N": return "N"
+    s = "".join(sorted(set(_IUPAC.get(x, "") + _IUPAC.get(y, ""))))
+    for k, v in _IUPAC.items():
+        if v == s: return k
+    return "N"
+
+def merge_reverse(seq, qual, reverse_seq, reverse_qual=None, orientation="auto", quality_gap=10):
+    rev = reverse_seq.upper().replace("U", "T")
+    rq0 = reverse_qual if reverse_qual and len(reverse_qual) == len(rev) else None
+    def cand(rc):
+        return (str(Seq(rev).reverse_complement()) if rc else rev), ((rq0[::-1] if rc else rq0) if rq0 else None)
+    order = [True, False] if orientation == "auto" else [orientation == "reverse_complement"]
+    tries = []
+    for rc in order:
+        R, rq = cand(rc); tries.append((_overlap_align(seq, R), R, rq, rc))
+    best = tries[0]
+    for t in tries[1:]:
+        if t[0][0] > best[0][0]: best = t
+    (score, pairs, i0, j0, iend, jend), R, rq, rc = best
+    both_q = qual is not None and rq is not None
+    out, oq = [], []
+    def push(c, q): out.append(c); oq.append(q if q is not None else 0)
+    for i in range(i0): push(seq[i], qual[i] if qual else None)
+    for j in range(j0): push(R[j], rq[j] if rq else None)
+    for x, y in pairs:
+        if x >= 0 and y >= 0:
+            fa, ra = seq[x], R[y]; qa = qual[x] if qual else 0; qb = rq[y] if rq else 0
+            amb_f, amb_r = fa not in "ACGT", ra not in "ACGT"
+            if fa == ra: c = fa; q = max(qa, qb)
+            elif amb_f or amb_r:
+                if amb_f and amb_r: c = _union(fa, ra); q = min(qa, qb)
+                else:
+                    amb, real = (fa, ra) if amb_f else (ra, fa)
+                    if amb == "N" or real in _IUPAC[amb]: c = real; q = qb if amb_f else qa
+                    else: c = _union(fa, ra); q = min(qa, qb)
+            elif both_q and abs(qa - qb) >= quality_gap: c = fa if qa > qb else ra; q = max(qa, qb)
+            else: c = _union(fa, ra); q = min(qa, qb)
+            push(c, q)
+        elif x >= 0: push(seq[x], qual[x] if qual else None)
+        else: push(R[y], rq[y] if rq else None)
+    for i in range(iend, len(seq)): push(seq[i], qual[i] if qual else None)
+    for j in range(jend, len(R)): push(R[j], rq[j] if rq else None)
+    return "".join(out), (oq if both_q else None)
+`;
+
+function cleanCall(o: Op): string | null {
+  const p = o.params ?? {}; const op = p.op as string;
+  switch (op) {
+    case 'trim_window': return `trim_window(seq, qual, threshold=${p.threshold ?? 20}, window=${p.window ?? 10}, ends=${py(p.ends ?? 'both')})`;
+    case 'trim_mott': return `trim_mott(seq, qual, error_cutoff=${p.errorCutoff ?? 0.05})`;
+    case 'trim_ambiguous_ends': return 'trim_ambiguous_ends(seq, qual)';
+    case 'trim_region': return `trim_region(seq, qual, ${p.from}, ${p.to}, mode=${py(p.mode === 'remove' ? 'remove' : 'keep')})`;
+    case 'remove_bases': return `remove_bases(seq, qual, ${py(p.chars ?? '')})`;
+    case 'edit_base': return `edit_base(seq, qual, ${p.pos}, ${py(p.base)})`;
+    case 'mask_low_quality': return `mask_low_quality(seq, qual, threshold=${p.threshold ?? 20})`;
+    case 'mark_region': return `mark_region(seq, qual, ${p.from}, ${p.to}, ${py(p.note ?? '')})`;
+    case 'reverse_complement': return 'reverse_complement(seq, qual)';
+    case 'merge_reverse': return `merge_reverse(seq, qual, ${py(p.reverseSeq)}, ${Array.isArray(p.reverseQual) ? py(p.reverseQual) : 'None'}, orientation=${py(p.orientation ?? 'auto')}, quality_gap=${p.qualityGap ?? 10})`;
+    default: return null;
+  }
+}
+
+export interface ScriptOpts { scope: 'workflow' | 'op'; opId?: string }
+export interface ScriptResult { code: string; notes: string[]; reproducible: 'exact' | 'partial'; filename: string }
+
+function sectionFor(recordId: string, o: Op, ctx: { chain: Version[]; cleanDone: Set<string>; alignmentFor: string | null }): { code: string[]; notes: string[]; exact: boolean } {
+  const code: string[] = [], notes: string[] = []; let exact = true;
+  const head = (t: string) => code.push('', `# ${'='.repeat(70)}`, `# ${t}`, `# ${'='.repeat(70)}`);
+  switch (o.step) {
+    case 'import': {
+      const raw = ctx.chain[0]; const m = stateOf(recordId)?.meta as Record<string, any>;
+      head(`Import (${new Date(o.createdAt).toISOString().slice(0, 19)}Z): ${o.name}`);
+      if (o.params?.source === 'merge') { // a merged record has TWO inputs: the script embeds both reads and repeats the merge
+        const q = o.params;
+        code.push(`# This record was made by merging a forward read ("${q.forwardName}", record ${q.forwardRecordId}, version ${q.forwardVersionN}) with a reverse read ("${q.reverseName}", record ${q.reverseRecordId}, version ${q.reverseVersionN}).`,
+          `forward_seq = ${py(q.forwardSeq)}`, `forward_qual = ${Array.isArray(q.forwardQual) ? py(q.forwardQual) : 'None'}`, `reverse_seq = ${py(q.reverseSeq)}   # as stored (orientation is decided below)`, `reverse_qual = ${Array.isArray(q.reverseQual) ? py(q.reverseQual) : 'None'}`,
+          `raw_seq, raw_qual = merge_reverse(forward_seq, forward_qual, reverse_seq, reverse_qual, orientation=${py(q.orientation ?? 'auto')}, quality_gap=10)`, 'seq, qual = raw_seq, raw_qual', `check(seq, ${py(sha(raw.seq).slice(0, 12))}, "merged forward + reverse sequence")`);
+        notes.push('The merged record is reproduced exactly from its two embedded reads (overlap alignment + column-wise consensus).');
+        break;
+      }
+      if (m?.source === 'ab1') { code.push(`# Original file: ${m.fileName ?? 'unknown'}. To start from the file instead of the literal below:`, `#   rec = SeqIO.read("${m.fileName ?? 'read.ab1'}", "abi"); raw_seq = str(rec.seq); raw_qual = rec.letter_annotations["phred_quality"]`); }
+      code.push(`raw_seq = ${py(raw.seq)}`, `raw_qual = ${raw.qual ? py(raw.qual) : 'None'}   # ${raw.qual ? 'Phred scores from the file' : 'no quality scores (FASTA / pasted input)'}`, `seq, qual = raw_seq, raw_qual`, `check(seq, ${py(sha(raw.seq).slice(0, 12))}, "raw sequence")`);
+      if (m?.source === 'adopted') notes.push('This record pre-dated the Sequence Lab: the raw sequence is the one stored when it entered the lab.');
+      break;
+    }
+    case 'clean': {
+      const call = cleanCall(o);
+      const v = ctx.chain.find((x) => x.opId === o.id);
+      head(`Cleaning: ${o.name}`);
+      if (!v) { code.push(`# This operation is not part of the current version lineage (it was undone or superseded), so it is not replayed.`); break; }
+      if (o.params?.op === 'revert') { code.push(`# Reverted to an earlier version: its content is restored literally.`, `seq, qual = ${py(v.seq)}, ${v.qual ? py(v.qual) : 'None'}`); }
+      else if (call) code.push(`seq, qual = ${call}`);
+      else { code.push(`seq, qual = ${py(v.seq)}, ${v.qual ? py(v.qual) : 'None'}  # unknown operation: restored literally`); exact = false; }
+      code.push(`check(seq, ${py(sha(v.seq).slice(0, 12))}, ${py(o.name)})`);
+      break;
+    }
+    case 'blast': {
+      const p = o.params; head(`NCBI BLAST similarity search (${new Date(o.createdAt).toISOString().slice(0, 10)})`);
+      code.push('from Bio.Blast import NCBIWWW, NCBIXML', `# Query = the working sequence at that time (version ${o.inputRef}).`, `blast_query = ${py(ctx.chain.find((x) => x.id === o.inputRef)?.seq ?? getVersion(o.inputRef ?? '')?.seq ?? '')}`,
+        `# NOTE: this sends the sequence to NCBI. No API key is needed; NCBI may throttle heavy use.`,
+        `handle = NCBIWWW.qblast("blastn", ${py(p.db)}, blast_query, megablast=${pyBool(p.program === 'megablast')}, hitlist_size=${p.hitlist}, expect=${p.expect}${p.entrez ? `, entrez_query=${py(p.entrez)}` : ''})`,
+        'blast_record = NCBIXML.read(handle)', 'for aln in blast_record.alignments[:10]:', '    hsp = aln.hsps[0]', '    print(aln.accession, aln.hit_def[:60], f"identity={hsp.identities / hsp.align_length * 100:.1f}%", f"E={hsp.expect:.2g}", f"bits={hsp.bits:.0f}")');
+      notes.push(`BLAST results depend on the NCBI database at the time of the search (${o.dbRetrievedAt ?? o.createdAt}); a re-run later can return different hits. The stored hit list is in the exported JSON.`);
+      exact = false; break;
+    }
+    case 'relatives': case 'outgroups': case 'dataset': {
+      const ds = o.step === 'dataset' ? o.result : null;
+      if (o.step === 'dataset' && ds?.members) {
+        head(`Reference dataset – ${o.name}`);
+        code.push('from Bio import Entrez', '# NCBI asks for a contact e-mail; use your own. No API key is required.', 'Entrez.email = "you@example.org"', 'def fetch_region(acc, start, end, strand):', '    h = Entrez.efetch(db="nuccore", id=acc, rettype="fasta", retmode="text", seq_start=start, seq_stop=end, strand=1 if strand == "plus" else 2)', '    return "".join(l.strip() for l in h.read().splitlines() if not l.startswith(">")).upper()', '', 'dataset = {}   # label -> (role, sequence)');
+        for (const m of ds.members) {
+          if (m.role === 'query') code.push(`dataset[${py(m.label)}] = ("query", seq)  # the current working sequence`);
+          else if (m.region) code.push(`dataset[${py(m.label)}] = (${py(m.role)}, fetch_region(${py(m.accession)}, ${m.region.from}, ${m.region.to}, ${py(m.region.strand)}))  # ${m.organism}`);
+          else code.push(`# ${m.label}: no stored coordinates; fetch ${m.accession} manually`);
+        }
+        notes.push('Regions are re-fetched by the recorded accession and coordinates. If NCBI has revised a record since, the sequence can differ slightly.');
+      }
+      break;
+    }
+    case 'species': {
+      const r = o.result; if (!r?.notes) break;
+      head(`Species typed by name: ${o.name}`);
+      code.push('# For each typed name VierStation looked the name up in NCBI Taxonomy, ran a BLAST of the query restricted to that taxon,', '# and took the aligned region of the best named hit. The regions themselves are re-fetched in the dataset step below.');
+      for (const n of r.notes) code.push(`#   ${py(n.name)} -> ${n.status}${n.accession ? ' ' + n.accession : ''}${n.entrez ? '   (BLAST Entrez query: ' + n.entrez + ')' : ''}: ${String(n.detail).replace(/\s+/g, ' ')}`);
+      notes.push('Species typed by name: the taxon-restricted BLAST depends on the NCBI database at the time of the search, so a re-run later can pick a different record.');
+      exact = false; break;
+    }
+    case 'pairwise': {
+      const r = o.result; if (!r?.alignment) break; const p = o.params;
+      head(`Pairwise ${r.alignment.mode} alignment: ${o.name}`);
+      code.push('from Bio import Align', 'aligner = Align.PairwiseAligner()', `aligner.mode = ${py(p.mode)}`, `aligner.match_score = ${p.match}`, `aligner.mismatch_score = ${p.mismatch}`, `aligner.open_gap_score = ${-p.gapOpen}`, `aligner.extend_gap_score = ${-p.gapExtend}`, `query_seq = ${py(r.querySeq)}`, `subject_seq = ${py(r.subjectSeq)}`, 'score = aligner.score(query_seq, subject_seq)', `print("alignment score:", score, "(VierStation stored ${r.alignment.score})")`);
+      notes.push('Pairwise alignment: Biopython PairwiseAligner uses the same affine-gap scoring (first gap column = open penalty, each further column = extend penalty), so the score is expected to match.');
+      break;
+    }
+    case 'align': case 'align_edit': {
+      const r = o.result; if (!r?.rows) break;
+      head(`${o.step === 'align' ? 'Multiple alignment' : 'Manual alignment edit'}: ${o.name}`);
+      const extCmd = r.command as string | undefined; // set only when an external program made the alignment
+      code.push(extCmd ? `# This alignment was made by ${r.method}. Command used (input = the dataset sequences as unaligned FASTA): ${extCmd}` : '# VierStation\'s built-in aligner (progressive profile–profile, affine gaps) has no exact equivalent in another program.', '# The alignment as computed/edited is embedded below so that downstream steps reproduce exactly.', 'alignment = {', ...r.labels.map((l: string, i: number) => `    ${py(l)}: ${py(r.rows[i])},`), '}',
+        ...(extCmd ? [] : ['# Closest independent re-computation (results will differ in details): MAFFT   ->   mafft --auto unaligned.fasta > aligned.fasta', '#                                                                       MUSCLE ->   muscle -align unaligned.fasta -output aligned.fasta']));
+      notes.push(extCmd ? `The alignment was produced by ${r.method}; the script embeds it and states the command. Re-running needs the same program (and version) to give the same alignment.` : 'The built-in aligner is not MAFFT/MUSCLE/Clustal. The script embeds the stored alignment; re-aligning with MAFFT or MUSCLE is the closest independent alternative.');
+      ctx.alignmentFor = o.id;
+      exact = false; break;
+    }
+    case 'tree': {
+      const r = o.result; if (!r?.params) break; const p = r.params;
+      head(`Phylogenetic tree: ${o.name}`);
+      if (ctx.alignmentFor !== o.inputRef) {
+        const src = o.inputRef ? getOp(o.inputRef) : undefined;
+        if (src?.result?.rows) { code.push('# The alignment this tree was built from (embedded so the step is self-contained):', 'alignment = {', ...src.result.labels.map((l: string, i: number) => `    ${py(l)}: ${py(src.result.rows[i])},`), '}'); ctx.alignmentFor = src.id; }
+      }
+      code.push(TREE_PY);
+      if (p.method === 'nj' || p.method === 'upgma') {
+        code.push(`tree = build_distance_tree(alignment, method=${py(p.method)}, model=${py(p.distance)}, gap=${py(p.gap)}${p.gamma ? `, gamma=${p.gamma}` : ''})`, `print(tree.format("newick"))`);
+        if (p.bootstrap) code.push(`# Bootstrap: ${p.bootstrap} replicates (VierStation seed ${p.seed}). Python's random generator differs, so support values will be close but not identical.`, `support = bootstrap_support(alignment, tree, ${p.bootstrap}, method=${py(p.method)}, model=${py(p.distance)}, gap=${py(p.gap)}${p.gamma ? `, gamma=${p.gamma}` : ''})`);
+        if (p.method === 'nj') notes.push('Neighbor-joining distances and topology are reproduced with the same formulas; branch lengths and tie-breaking can differ in the last digits.');
+        else notes.push('UPGMA is reproduced with Biopython\'s implementation of the same algorithm.');
+      } else {
+        const cmd: Record<string, string> = { ml: `iqtree2 -s aligned.fasta -m ${p.mlModel === 'HKY85' ? 'HKY' : p.mlModel}${p.mlGamma ? '+G4' : ''} -b ${p.bootstrap || 100}${p.outgroups?.length ? ` -o ${p.outgroups.join(',')}` : ''}`, mp: 'Biopython ParsimonyTreeConstructor (below) or PAUP* / TNT', me: 'MEGA (Minimum Evolution) or FastME: fastme -i dist.phy -o tree.nwk -m B' };
+        code.push(`# ${p.method.toUpperCase()} cannot be reproduced exactly outside VierStation (its search and scoring are implemented internally).`, `# Closest reproducible alternative: ${cmd[p.method]}`);
+        if (p.method === 'mp') code.push('from Bio.Phylo.TreeConstruction import ParsimonyScorer, NNITreeSearcher, ParsimonyTreeConstructor, DistanceCalculator, DistanceTreeConstructor', 'aln = to_msa(alignment)', 'start = DistanceTreeConstructor(DistanceCalculator("identity")).nj(DistanceCalculator("identity").get_distance(aln))', 'tree = ParsimonyTreeConstructor(NNITreeSearcher(ParsimonyScorer()), start).build_tree(aln)   # Fitch parsimony + NNI, same idea, different heuristics', 'print(tree.format("newick"))');
+        code.push(`# VierStation's result is stored with the operation. Newick:`, `stored_newick = ${py(r.newick)}`);
+        notes.push(`${p.method.toUpperCase()} is not reproduced exactly: ${cmd[p.method]} is the closest alternative.`);
+        exact = false;
+      }
+      break;
+    }
+    default: break;
+  }
+  return { code, notes, exact };
+}
+
+const TREE_PY = `
+import itertools, math, random
+from Bio.Phylo.TreeConstruction import DistanceMatrix, DistanceTreeConstructor
+from Bio.Align import MultipleSeqAlignment
+from Bio.SeqRecord import SeqRecord
+
+def prepare_columns(rows, gap):
+    L = len(rows[0]); rows = [r.upper().replace("U", "T") for r in rows]; keep = []
+    for c in range(L):
+        bad = sum(1 for r in rows if r[c] not in "ACGT")
+        if gap["mode"] == "pairwise":
+            if bad < len(rows): keep.append(c)
+        elif gap["mode"] == "complete":
+            if bad == 0: keep.append(c)
+        elif bad / len(rows) <= gap["cutoff"] / 100: keep.append(c)
+    return ["".join(r[c] for c in keep) for r in rows]
+
+def _counts(a, b):
+    n = p1 = p2 = q = 0
+    for x, y in zip(a, b):
+        if x not in "ACGT" or y not in "ACGT": continue
+        n += 1
+        if x == y: continue
+        if (x in "AG") == (y in "AG"):
+            if x in "AG": p1 += 1
+            else: p2 += 1
+        else: q += 1
+    return n, p1, p2, q
+
+def distance(a, b, model, gamma=None, freqs=None):
+    n, p1, p2, q = _counts(a, b)
+    if n < 20: return 3.0
+    P1, P2, Q = p1 / n, p2 / n, q / n; P = P1 + P2; pd = P + Q
+    lg = (lambda x: gamma * (x ** (-1 / gamma) - 1)) if gamma else (lambda x: -math.log(x))
+    try:
+        if model == "p": v = pd
+        elif model == "jc69": v = 0.75 * lg(1 - 4 / 3 * pd)
+        elif model == "k2p": v = 0.5 * lg(1 - 2 * P - Q) + 0.25 * lg(1 - 2 * Q)
+        else:
+            pA, pC, pG, pT = freqs; pR, pY = pA + pG, pC + pT
+            t1 = 1 - pR / (2 * pA * pG) * P1 - Q / (2 * pR); t2 = 1 - pY / (2 * pC * pT) * P2 - Q / (2 * pY); t3 = 1 - Q / (2 * pR * pY)
+            v = 2 * pA * pG / pR * lg(t1) + 2 * pC * pT / pY * lg(t2) + 2 * (pR * pY - pA * pG * pY / pR - pC * pT * pR / pY) * lg(t3)
+    except (ValueError, ZeroDivisionError): return 3.0
+    return min(3.0, max(0.0, v))
+
+def distance_matrix(rows, model, gamma=None):
+    allb = "".join(rows); tot = sum(allb.count(b) for b in "ACGT") or 1
+    freqs = [allb.count(b) / tot for b in "ACGT"]
+    n = len(rows)
+    lower = [[distance(rows[i], rows[j], model, gamma, freqs) for j in range(i)] + [0.0] for i in range(n)]
+    return lower
+
+def build_distance_tree(alignment, method, model, gap, gamma=None):
+    labels = list(alignment); rows = prepare_columns([alignment[l] for l in labels], gap)
+    dm = DistanceMatrix(labels, distance_matrix(rows, model, gamma))
+    ctor = DistanceTreeConstructor()
+    return ctor.nj(dm) if method == "nj" else ctor.upgma(dm)
+
+def bootstrap_support(alignment, tree, reps, method, model, gap, gamma=None, seed=1):
+    rnd = random.Random(seed); labels = list(alignment); L = len(alignment[labels[0]])
+    def splits(t):
+        out = set(); names = {x.name for x in t.get_terminals()}
+        for c in t.get_nonterminals():
+            s = frozenset(x.name for x in c.get_terminals())
+            if 1 < len(s) < len(names) - 1: out.add(min(s, frozenset(names - s), key=lambda z: sorted(z)))
+        return out
+    ref = splits(tree); hits = {s: 0 for s in ref}
+    for _ in range(reps):
+        cols = [rnd.randrange(L) for _ in range(L)]
+        rep = {l: "".join(alignment[l][c] for c in cols) for l in labels}
+        for s in splits(build_distance_tree(rep, method, model, gap, gamma)) & ref: hits[s] += 1
+    return {tuple(sorted(s)): 100 * h / reps for s, h in hits.items()}
+
+def to_msa(alignment):
+    return MultipleSeqAlignment([SeqRecord(__import__("Bio.Seq", fromlist=["Seq"]).Seq(s), id=l) for l, s in alignment.items()])
+`;
+
+const PREAMBLE = `#!/usr/bin/env python3
+# Exported by VierStation Sequence Lab. Requires: pip install biopython
+# This script uses NO API keys. Network access is only needed for the BLAST / Entrez steps.
+import hashlib
+
+def check(seq, sha12, what):
+    ok = hashlib.sha256(seq.encode()).hexdigest()[:12] == sha12
+    print(("OK       " if ok else "MISMATCH ") + what + f" ({len(seq)} bp)")
+`;
+
+export function buildScript(recordId: string, o: ScriptOpts): ScriptResult {
+  const st = stateOf(recordId); if (!st) throw new Error('No history for this record');
+  const ops = listOps(recordId, { withResult: true }).filter((x) => x.status === 'completed');
+  const chain = versionChain(recordId);
+  const ctx = { chain, cleanDone: new Set<string>(), alignmentFor: null as string | null };
+  const parts: string[] = [PREAMBLE, CLEAN_PY];
+  const notes: string[] = []; let exact = true;
+  const selected = o.scope === 'op' ? ops.filter((x) => x.id === o.opId) : ops.filter((x) => !['history'].includes(x.step));
+  if (o.scope === 'op' && !selected.length) throw new Error('Operation not found (or it did not complete).');
+  if (o.scope === 'op') {
+    const op = selected[0];
+    if (op.step === 'clean') {
+      const parent = op.inputRef ? getVersion(op.inputRef) : undefined;
+      parts.push('# Single operation: the input is the version this operation was applied to.', `seq = ${py(parent?.seq ?? '')}`, `qual = ${parent?.qual ? py(parent.qual) : 'None'}`);
+    } else if (['align', 'align_edit', 'tree'].includes(op.step)) parts.push('# Single operation. The input alignment/dataset is embedded where needed.');
+    else parts.push('seq = ""  # set to the sequence you want to search with', 'qual = None');
+  }
+  const seen = new Set<string>();
+  for (const op of selected) {
+    // only the LATEST dataset/align/tree before a later step matters for a workflow script; earlier superseded versions are listed as comments
+    const latestOfStep = ops.filter((x) => x.step === op.step).slice(-1)[0];
+    if (o.scope === 'workflow' && ['dataset', 'align', 'align_edit', 'tree', 'blast', 'relatives', 'outgroups', 'species'].includes(op.step) && latestOfStep.id !== op.id) { parts.push('', `# (superseded ${op.step} "${op.name}" from ${op.createdAt.slice(0, 19)}Z – not replayed; it remains in the history)`); continue; }
+    const s = sectionFor(recordId, op, ctx);
+    parts.push(...s.code); notes.push(...s.notes); exact = exact && s.exact; seen.add(op.step);
+  }
+  if (o.scope === 'workflow') {
+    const idn = latestOp(recordId, 'identify');
+    if (idn) parts.push('', '# ' + '='.repeat(70), '# Final identification (a decision recorded by a person – there is no code for it)', '# ' + '='.repeat(70), `# Conclusion: ${idn.result?.taxon ?? ''} (${idn.result?.rank ?? ''}), confidence: ${idn.result?.confidence ?? ''}`);
+    void currentDataset;
+  }
+  const header = ['# ' + '-'.repeat(70), `# Reproducibility: ${exact ? 'all included steps reproduce the stored result exactly' : 'PARTIAL – see the notes below'}`, ...Array.from(new Set(notes)).map((n) => '#  • ' + n), '# ' + '-'.repeat(70), ''];
+  const code = parts[0] + '\n' + header.join('\n') + '\n' + parts.slice(1).join('\n') + '\n';
+  const name = recordName(recordId).replace(/[^\w.-]+/g, '_');
+  return { code, notes: Array.from(new Set(notes)), reproducible: exact ? 'exact' : 'partial', filename: o.scope === 'op' ? `${name}_${selected[0].step}.py` : `${name}_workflow.py` };
+}

@@ -1,0 +1,16 @@
+node_modules
+dist
+data/*.db*
+data/files
+data/.master.key
+.env
+.tmp
+tests/perf/out
+tests/perf/*.log
+tests/e2e/out
+
+# Added before GitHub publish (secrets and user data)
+data/
+runs/
+.env.*
+!.env.example

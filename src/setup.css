@@ -1,0 +1,14 @@
+/* First-run setup dialog: a fixed-size installer-style card. Every part fits the window; only the terms area scrolls. */
+.setup-shell { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 14px; background: linear-gradient(180deg, var(--sky-soft), #fff 60%); overflow: hidden; }
+.setup-card { width: min(560px, 100%); height: min(640px, 100%); display: flex; flex-direction: column; background: #fff; border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 10px 40px rgb(69 112 182 / .18); overflow: hidden; }
+.setup-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); flex: none; }
+.setup-head h2 { margin: 0; font-size: 1.15rem; }
+.setup-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 14px 18px; overflow: hidden; }
+.setup-body .field { display: flex; flex-direction: column; gap: 4px; font-weight: 500; flex: none; }
+.setup-terms-title { font-weight: 600; margin-top: 4px; flex: none; }
+.setup-terms { flex: 1; min-height: 90px; overflow: auto; border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 12px; background: var(--bg-soft); font-size: 13px; }
+.setup-terms h3 { font-size: 1rem; margin: 8px 0 4px; } .setup-terms h4 { font-size: .95rem; margin: 8px 0 4px; }
+.setup-terms p { margin: 4px 0; } .setup-terms ul { margin: 4px 0 4px 18px; }
+.setup-foot { flex: none; border-top: 1px solid var(--line); padding: 12px 18px; display: flex; flex-direction: column; gap: 8px; background: #fff; }
+.setup-agree { font-size: 14px; }
+.setup-buttons { display: flex; justify-content: flex-end; gap: 8px; }
