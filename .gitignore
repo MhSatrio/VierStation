@@ -18,3 +18,6 @@ runs/
 # Word documentation stays on the PC only
 *.docx
 *.doc
+
+# Local setup file written by the first-run screen (lab name, data folder). Copy vierstation.config.example.json to start.
+vierstation.config.json
