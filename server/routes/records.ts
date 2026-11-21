@@ -177,10 +177,10 @@ route('GET', '/api/records/:id/provenance', (c) => { requireRecord(c.user!.id, c
 route('POST', '/api/tables/:id/export', async (c) => {
   const t = requireTable(c.user!.id, c.params.id);
   const spec = specFromBody(c.body);
-  const f = await exportRecords({ workspaceId: t.workspace_id, tableId: t.id, recordIds: spec.ids, spec: { ...spec, ids: undefined }, format: c.body.format === 'json' ? 'json' : 'csv', userId: c.user!.id });
+  const f = await exportRecords({ workspaceId: t.workspace_id, tableId: t.id, recordIds: spec.ids, spec: { ...spec, ids: undefined }, format: c.body.format === 'json' ? 'json' : c.body.format === 'geojson' ? 'geojson' : 'csv', userId: c.user!.id });
   auditCtx(c, t.workspace_id, 'export', 'table', t.id, { rows: f.rows, format: c.body.format });
   c.res.writeHead(200, {
-    'Content-Type': c.body.format === 'json' ? 'application/json; charset=utf-8' : 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${f.name}"`, 'Cache-Control': 'no-store', 'X-Rows': String(f.rows),
+    'Content-Type': `${f.mime}; charset=utf-8`, 'Content-Disposition': `attachment; filename="${f.name}"`, 'Cache-Control': 'no-store', 'X-Rows': String(f.rows), 'X-Skipped': String(f.skipped),
   });
   c.res.end(f.text);
 });

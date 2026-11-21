@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Field, ViewConfig, ViewMeta, ViewType } from '../../shared/types.ts';
 import { parseDelimited } from '../../shared/csv.ts';
+import { geojsonToGrid } from '../../shared/geojson.ts';
 import { del, patch, post } from '../lib/api.ts';
 import { navigate, setQuery, useQueryParam } from '../lib/router.tsx';
 import { invalidateTable, toast, useSession, useTableDetail } from '../lib/store.ts';
@@ -62,12 +63,13 @@ export function TablePage({ tableId }: { tableId: string }) {
   const bulkSet = async (f: Field, value: unknown) => {
     try { const r = await post(`/api/tables/${tableId}/bulk`, { op: 'update', ids: [...selected], fields: { [f.id]: value }, createChoices: true }); toast(`Updated ${r.affected} record(s)`, 'ok'); } catch (e) { toast((e as Error).message, 'err'); }
   };
-  const exportFile = async (format: 'csv' | 'json', onlySelected: boolean) => {
+  const exportFile = async (format: 'csv' | 'json' | 'geojson', onlySelected: boolean) => {
     try {
       const res = await fetch(`/api/tables/${tableId}/export`, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-vs': '1' }, body: JSON.stringify({ format, ...(onlySelected ? { ids: [...selected] } : spec) }) });
       if (!res.ok) throw new Error((await res.json()).error);
       const blob = await res.blob(); const a = document.createElement('a');
       a.href = URL.createObjectURL(blob); a.download = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? `export.${format}`; a.click(); URL.revokeObjectURL(a.href);
+      const skipped = Number(res.headers.get('x-skipped') ?? 0); if (format === 'geojson' && skipped) toast(`${skipped} record(s) without valid coordinates were left out of the GeoJSON`, 'ok');
     } catch (e) { toast((e as Error).message, 'err'); }
   };
 
@@ -93,8 +95,8 @@ export function TablePage({ tableId }: { tableId: string }) {
           <span className="grow" />
           {canEdit && <button className="btn sm" onClick={() => { if (view.type === 'grid') void gridApi.current?.createRecord(); else void post(`/api/tables/${tableId}/records`, { fields: {} }).then((r) => openRecord(r.records[0].id)).catch((e) => toast(e.message, 'err')); }}><Icon name="plus" /> Add record</button>}
           {(t.kind === 'dna' || t.kind === 'rna') && <button className="btn secondary sm" onClick={() => navigate('/map')} title="Show where these samples were collected on a globe"><Icon name="globe" /> Show map</button>}
-          {canEdit && <button className="btn secondary sm hide-m" onClick={() => setImportOpen(true)}><Icon name="upload" /> Import CSV</button>}
-          <MenuButton icon="download" className="btn secondary sm hide-m" label="Export">{(close) => (<><button className="item" onClick={() => { close(); void exportFile('csv', false); }}>CSV (current filters)</button><button className="item" onClick={() => { close(); void exportFile('json', false); }}>JSON with links & evidence</button></>)}</MenuButton>
+          {canEdit && <button className="btn secondary sm hide-m" onClick={() => setImportOpen(true)}><Icon name="upload" /> Import CSV / GeoJSON</button>}
+          <MenuButton icon="download" className="btn secondary sm hide-m" label="Export">{(close) => (<><button className="item" onClick={() => { close(); void exportFile('csv', false); }}>CSV (current filters)</button><button className="item" onClick={() => { close(); void exportFile('json', false); }}>JSON with links & evidence</button><button className="item" onClick={() => { close(); void exportFile('geojson', false); }} title="Sample points with their other columns as properties. Open it in QGIS with Layer > Add Layer > Add Vector Layer.">GeoJSON for QGIS (needs Latitude and Longitude)</button></>)}</MenuButton>
         </div>
         <div className="viewtabs" role="tablist" aria-label="Views">
           {views.map((v) => (
@@ -184,10 +186,17 @@ function ImportModal({ tableId, detail, onClose, onDone }: { tableId: string; de
   const [map, setMap] = useState<string[]>([]);
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
+  const [note, setNote] = useState('');
   const editable = detail.fields.filter((f) => !['formula', 'relation', 'lookup', 'rollup', 'createdTime', 'lastModifiedTime', 'attachment', 'structure', 'user'].includes(f.type));
   const onFile = async (file: File) => {
     if (file.size > 25 * 1024 * 1024) { setErr('Files over 25 MB are not supported here.'); return; }
-    const parsed = parseDelimited(await file.text());
+    const raw = await file.text();
+    let parsed: string[][];
+    if (/\.(geojson|json)$/i.test(file.name) || /^\s*\{/.test(raw)) {
+      // GeoJSON from QGIS: the points become rows (Latitude, Longitude, then every property) and go through the same column mapping
+      try { const g = geojsonToGrid(raw); parsed = g.grid; setNote(`${g.points.toLocaleString()} point(s) read${g.skipped ? `; ${g.skipped} feature(s) skipped (not points, or invalid coordinates)` : ''}.`); }
+      catch (e) { setErr((e as Error).message); return; }
+    } else { parsed = parseDelimited(raw); setNote(''); }
     if (parsed.length < 2) { setErr('The file needs a header row and at least one data row.'); return; }
     setErr(''); setRows(parsed);
     setMap(parsed[0].map((h) => editable.find((f) => f.name.toLowerCase() === h.trim().toLowerCase())?.id ?? '__new'));
@@ -209,13 +218,14 @@ function ImportModal({ tableId, detail, onClose, onDone }: { tableId: string; de
     } catch (e) { setErr((e as Error).message + ' Records before the failing batch were imported.'); setBusy(''); }
   };
   return (
-    <Modal title="Import CSV / TSV" size="wide" onClose={onClose} footer={<><button className="btn secondary" onClick={onClose}>Cancel</button><button className="btn" disabled={!rows || !!busy} onClick={run}>{busy || `Import ${rows ? (rows.length - 1).toLocaleString() : ''} rows`}</button></>}>
+    <Modal title="Import CSV / TSV / GeoJSON" size="wide" onClose={onClose} footer={<><button className="btn secondary" onClick={onClose}>Cancel</button><button className="btn" disabled={!rows || !!busy} onClick={run}>{busy || `Import ${rows ? (rows.length - 1).toLocaleString() : ''} rows`}</button></>}>
       <div className="col">
         {err && <div className="notice err">{err}</div>}
+        {note && !err && <div className="muted small">{note}</div>}
         {!rows ? (
           <label className="dropzone" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) void onFile(f); }}>
             <Icon name="upload" size={22} /><div>Drop a .csv / .tsv file here or <u>choose a file</u></div>
-            <input type="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values" className="sr-only" onChange={(e) => e.target.files?.[0] && void onFile(e.target.files[0])} />
+            <input type="file" accept=".csv,.tsv,.txt,.geojson,.json,text/csv,text/tab-separated-values,application/geo+json,application/json" className="sr-only" onChange={(e) => e.target.files?.[0] && void onFile(e.target.files[0])} />
           </label>
         ) : (
           <>
