@@ -1,0 +1,20 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24          # package.json "engines": node >= 24 (node:sqlite, type stripping)
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # The whole unit suite takes about 5 minutes on a Windows laptop (seqlab.test.ts ~1.5 min, discovery ~1 min); it is slow, not stuck.
+      - run: npm test
