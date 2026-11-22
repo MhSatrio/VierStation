@@ -193,8 +193,8 @@ export function Grid({ tableId, detail, config, setConfig, spec, canEdit, onOpen
   if (error) return <div className="empty"><b>Could not load records</b>{error}<br /><button className="btn secondary sm" style={{ marginTop: 8 }} onClick={refresh}>Retry</button></div>;
   return (
     <div className="grid" ref={scroller} tabIndex={0} onKeyDown={onKey} onScroll={(e) => setView({ top: e.currentTarget.scrollTop, h: e.currentTarget.clientHeight })} role="grid" aria-rowcount={total ?? undefined} aria-label="Records">
-      <div className="hdr" style={{ width: totalW }}>
-        <div className="hc num" style={{ width: NUMW }}>
+      <div className="hdr" style={{ width: totalW }} role="row">
+        <div className="hc num" style={{ width: NUMW }} role="columnheader" aria-label="Select">
           <input type="checkbox" aria-label="Select all loaded rows" checked={!!total && selected.size > 0 && selected.size >= Math.min(total, 5000)} onChange={(e) => (e.target.checked ? void selectAll() : setSelected(new Set()))} />
         </div>
         {cols.map((f, c) => {
@@ -207,13 +207,13 @@ export function Grid({ tableId, detail, config, setConfig, spec, canEdit, onOpen
             </div>
           );
         })}
-        {canEdit && <div className="hc" style={{ width: 40, justifyContent: 'center' }} onClick={() => onEditField(undefined as unknown as Field)} title="Add field" role="button" aria-label="Add field"><Icon name="plus" size={15} /></div>}
+        {canEdit && <div className="hc" style={{ width: 40, justifyContent: 'center' }} role="columnheader"><button type="button" aria-label="Add field" title="Add field" onClick={() => onEditField(undefined as unknown as Field)} style={{ background: 'none', border: 0, width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'inherit' }}><Icon name="plus" size={15} /></button></div>}
       </div>
-      <div className="rows" style={{ height: model.count * ROW + ROW * 2, width: totalW }}>
+      <div className="rows" role={model.count > 0 ? "rowgroup" : "presentation"} style={{ height: model.count * ROW + ROW * 2, width: totalW }}>
         {total === 0 && <div style={{ position: 'sticky', left: 0, width: '100%' }}><div className="empty"><b>No records</b>{spec.filter || spec.search ? 'Nothing matches the current filters.' : 'Add a record, import a CSV, or search a scientific database to get started.'}</div></div>}
         {total === null && <div className="empty"><span className="spinner" /> Loading…</div>}
         {rows}
-        {canEdit && total !== null && <button className="add" style={{ position: 'absolute', top: model.count * ROW, height: ROW }} onClick={() => void createRecord()}><Icon name="plus" size={14} />&nbsp; New record</button>}
+        {canEdit && total !== null && <div role="row" style={{ display: 'contents' }}><div role="gridcell" style={{ display: 'contents' }}><button className="add" style={{ position: 'absolute', top: model.count * ROW, height: ROW }} onClick={() => void createRecord()}><Icon name="plus" size={14} />&nbsp; New record</button></div></div>}
       </div>
 
       {editing && editRec && ['singleSelect', 'multiSelect', 'status'].includes(editing.field.type) && <SelectEditor anchor={anchorRef} field={editing.field} value={editRec.fields[editing.field.id]} onCommit={(v) => void commit(editRec, editing.field, v, false)} onClose={() => setEditing(null)} />}

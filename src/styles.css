@@ -1,7 +1,7 @@
 /* VierStation – styled from the VierApparatus website tokens: brand #4570B6, sky #CAEBFB, ink #231F20, Jost, light surfaces. */
 :root {
   --brand: #4570b6; --brand-dark: #365a94; --sky: #caebfb; --sky-soft: #e8f6fd; --ink: #231f20;
-  --ink-2: rgb(35 31 32 / 0.72); --ink-3: rgb(35 31 32 / 0.5); --line: rgb(35 31 32 / 0.12); --line-2: rgb(35 31 32 / 0.2);
+  --ink-2: rgb(35 31 32 / 0.72); --ink-3: rgb(35 31 32 / 0.66); --line: rgb(35 31 32 / 0.12); --line-2: rgb(35 31 32 / 0.2);
   --bg: #fff; --bg-soft: #f6f8fb; --bg-hover: #eef3fa;
   --green: #1d8a57; --green-bg: #e2f4ea; --amber: #8a5d00; --amber-bg: #fff1cf; --red: #b3342a; --red-bg: #fde7e4; --gray-bg: #eceef1; --gray: #565a60;
   --ev-exp: #1d8a57; --ev-db: #4570b6; --ev-pred: #c98a00; --ev-seq: #8a56c2; --ev-user: #5c6670; --ev-unv: #b3342a;
@@ -32,7 +32,7 @@ a { color: var(--brand); text-decoration: none; } a:hover { text-decoration: und
 .btn.danger { background: #fff; color: var(--red); border-color: var(--red); } .btn.danger:hover:not(:disabled) { background: var(--red-bg); color: var(--red); border-color: var(--red); }
 .btn.sm { min-height: 28px; padding: 2px 9px; font-size: 13px; } .btn.icon { padding: 4px 7px; min-width: 32px; } .btn.sm.icon { min-width: 28px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
-.btn.active { background: var(--sky); color: var(--brand); border-color: var(--brand); }
+.btn.active { background: var(--sky); color: var(--brand-dark); border-color: var(--brand); }
 .input, .select, .textarea { width: 100%; min-height: 32px; padding: 4px 10px; border: 1px solid var(--line-2); border-radius: 7px; background: #fff; }
 .input:focus, .select:focus, .textarea:focus { outline: 3px solid rgb(69 112 182 / .35); border-color: var(--brand); }
 .textarea { min-height: 72px; resize: vertical; font-family: inherit; } .textarea.mono { font-family: var(--mono); font-size: 12.5px; }
@@ -52,7 +52,7 @@ label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; 
 .collapsed .nav .group { height: 1px; background: var(--line); margin: 8px 6px; padding: 0; font-size: 0; }
 .nav a, .nav button.navbtn { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 7px; color: var(--ink); background: none; border: 0; text-align: left; width: 100%; font-weight: 500; text-decoration: none; }
 .nav a:hover, .nav button.navbtn:hover { background: var(--bg-hover); text-decoration: none; }
-.nav a.active { background: var(--sky); color: var(--brand); }
+.nav a.active { background: var(--sky); color: var(--brand-dark); }
 .nav .count { margin-left: auto; font-size: 11.5px; color: var(--ink-3); background: var(--bg-soft); border-radius: 10px; padding: 0 7px; } .nav a.active .count { background: #fff; color: var(--brand); }
 .collapsed .nav .label, .collapsed .nav .count, .collapsed .sidebar .brand .name, .collapsed .sidebar .brand img.logo { display: none; }
 .sidebar .foot { border-top: 1px solid var(--line); padding: 8px; display: flex; align-items: center; gap: 8px; }

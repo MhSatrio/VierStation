@@ -213,16 +213,16 @@ export function ExplorerView({ focus: focusProp, table, embedded, onOpenRecord, 
   const filterPanel = (
     <aside className="xfilters" aria-label="Filters">
       <div className="row between"><b>Filters</b>{activeFilters > 0 && <button className="btn ghost sm" onClick={() => setFilters(NO_FILTERS)}>Clear ({activeFilters})</button>}</div>
-      <details open><summary>Entity type <HelpTip k="xpFilterKinds" label="entity type" /></summary>
+      <details open><summary>Entity type</summary><div style={{ display: 'flex', justifyContent: 'flex-end' }}><HelpTip k="xpFilterKinds" label="entity type" /></div>
         {GRAPH_KINDS.map((k) => <label key={k} className="check small"><input type="checkbox" checked={filters.kinds.includes(k)} onChange={() => toggle('kinds', k)} /><ShapeGlyph type={k} size={14} /><span>{KIND_LABEL[k]} <span className="muted">{facets?.kinds.find((x: any) => x.kind === k)?.n ?? ''}</span></span></label>)}
       </details>
-      <details open><summary>Relationship type <HelpTip k="xpFilterTypes" label="relationship type" /></summary>
+      <details open><summary>Relationship type</summary><div style={{ display: 'flex', justifyContent: 'flex-end' }}><HelpTip k="xpFilterTypes" label="relationship type" /></div>
         <div className="scrollbox">{(facets?.types ?? []).map((t: any) => <label key={t.id} className="check small"><input type="checkbox" checked={filters.types.includes(t.id)} onChange={() => toggle('types', t.id)} /><span>{t.name} <span className="muted">{t.n || ''}</span></span></label>)}</div>
       </details>
-      <details open><summary>Evidence <HelpTip k="xpFilterEvidence" label="evidence" /></summary>
+      <details open><summary>Evidence</summary><div style={{ display: 'flex', justifyContent: 'flex-end' }}><HelpTip k="xpFilterEvidence" label="evidence" /></div>
         {EVIDENCE.map((e) => <label key={e.id} className="check small"><input type="checkbox" checked={filters.evidence.includes(e.id)} onChange={() => toggle('evidence', e.id)} /><LineGlyph ev={e.id} /><span>{e.label} <span className="muted">{facets?.evidence.find((x: any) => x.id === e.id)?.n ?? ''}</span></span></label>)}
       </details>
-      <details><summary>Tags <HelpTip k="xpFilterTags" label="tags" /></summary>
+      <details><summary>Tags</summary><div style={{ display: 'flex', justifyContent: 'flex-end' }}><HelpTip k="xpFilterTags" label="tags" /></div>
         <div className="scrollbox">{(facets?.tags ?? []).length === 0 ? <span className="muted small">No tags yet.</span> : facets.tags.map((t: any) => <label key={t.tag} className="check small"><input type="checkbox" checked={filters.tags.includes(t.tag)} onChange={() => toggle('tags', t.tag)} /><span>{t.tag} <span className="muted">{t.n}</span></span></label>)}</div>
       </details>
       <details><summary>Organism · source · status</summary>
@@ -230,7 +230,7 @@ export function ExplorerView({ focus: focusProp, table, embedded, onOpenRecord, 
         <label className="fld"><span className="small">Source database <HelpTip k="xpFilterSource" label="source database" /></span><select className="select" value={filters.source} onChange={(e) => setFilters({ ...filters, source: e.target.value })} aria-label="Source database filter"><option value="">Any</option>{(facets?.sources ?? []).map((s: string) => <option key={s}>{s}</option>)}</select></label>
         <label className="fld"><span className="small">Verification <HelpTip k="xpFilterVerification" label="verification" /></span><select className="select" value={filters.verification} onChange={(e) => setFilters({ ...filters, verification: e.target.value })} aria-label="Verification filter"><option value="">Any</option>{VERIFICATION.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}</select></label>
       </details>
-      <details open><summary>Pathway <HelpTip k="xpFilterPathway" label="pathway" /></summary>
+      <details open><summary>Pathway</summary><div style={{ display: 'flex', justifyContent: 'flex-end' }}><HelpTip k="xpFilterPathway" label="pathway" /></div>
         <select className="select" value={pathwayId ?? ''} onChange={(e) => { const v = e.target.value; if (v && mode === 'flow') { setPathwayId(v); setExtra([]); } else if (v) showPathway(v); else { setPathwayId(null); if (mode === 'pathway' || mode === 'flow') setMode('network'); } }} aria-label="Pathway"><option value="">None</option>{(facets?.pathways ?? []).map((p: any) => <option key={p.id} value={p.id}>{p.name} ({p.steps})</option>)}</select>
       </details>
     </aside>

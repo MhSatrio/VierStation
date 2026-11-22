@@ -98,13 +98,15 @@ export function TablePage({ tableId }: { tableId: string }) {
           {canEdit && <button className="btn secondary sm hide-m" onClick={() => setImportOpen(true)}><Icon name="upload" /> Import CSV / GeoJSON</button>}
           <MenuButton icon="download" className="btn secondary sm hide-m" label="Export">{(close) => (<><button className="item" onClick={() => { close(); void exportFile('csv', false); }}>CSV (current filters)</button><button className="item" onClick={() => { close(); void exportFile('json', false); }}>JSON with links & evidence</button><button className="item" onClick={() => { close(); void exportFile('geojson', false); }} title="Sample points with their other columns as properties. Open it in QGIS with Layer > Add Layer > Add Vector Layer.">GeoJSON for QGIS (needs Latitude and Longitude)</button></>)}</MenuButton>
         </div>
-        <div className="viewtabs" role="tablist" aria-label="Views">
+        <div className="viewtabs">
+          <div role="tablist" aria-label="Views" style={{ display: 'contents' }}>
           {views.map((v) => (
             <button key={v.id} role="tab" aria-selected={v.id === view.id} className={v.id === view.id ? 'on' : ''} onClick={() => { setQuery('v', v.id, false); setSelected(new Set()); }}
               onDoubleClick={async () => { if (!canEdit) return; const n = prompt('Rename view', v.name); if (n?.trim()) { await patch(`/api/views/${v.id}`, { name: n.trim() }); invalidateTable(tableId); reload(); } }}>
               <Icon name={VIEW_ICON[v.type]} size={14} />{v.name}
             </button>
           ))}
+          </div>
           {canEdit && <button onClick={() => setNewView(true)} aria-label="Add view" title="Add view"><Icon name="plus" size={14} /> View</button>}
           {canEdit && views.length > 1 && <button onClick={async () => { if (await confirmDialog(`Delete the view “${view.name}”? Records are not affected.`, 'Delete view')) { await del(`/api/views/${view.id}`); invalidateTable(tableId); setQuery('v', null); reload(); } }} aria-label="Delete this view" title="Delete this view" style={{ marginLeft: 'auto' }}><Icon name="trash" size={14} /></button>}
         </div>
